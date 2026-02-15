@@ -131,4 +131,4 @@ The CNN HPO benchmark is computationally heavier due to neural network training.
 ---
 
 ## License:
-This repository is provided for academic research purposes.
+This project is licensed under the MIT License.
