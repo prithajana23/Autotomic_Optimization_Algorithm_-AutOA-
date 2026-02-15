@@ -127,6 +127,7 @@ This repository contains all necessary implementation details to reproduce the e
 ## Hardware Notes:
 Runtime may vary depending on CPU/GPU availability.
 The CNN HPO benchmark is computationally heavier due to neural network training.
+
 ---
 
 ## License:
