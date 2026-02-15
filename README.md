@@ -1,5 +1,5 @@
 # AutOA: Adaptive Autotomy-Based Optimization Algorithm
-
+---
 This repository provides the complete experimental framework used in the ESWA submission:
 
 **AutOA: Adaptive Autotomy-Based Optimization with Diversity-Driven Mode Switching**
@@ -10,17 +10,10 @@ It contains the full implementation of Core, Hybrid, and Adaptive AutOA, along w
 
 ## Repository Structure
 
-Gear_problem_code/
-Gear Train Design benchmark (engineering optimization)
-
-MRPP/
-Multi-Robot Path Planning benchmark (robotics optimization)
-
-HPO_run_codes/
-CNN Hyperparameter Optimization benchmark (machine learning)
-
+Gear_problem_code/   → Gear Train Design benchmark (engineering optimization)
+MRPP/                → Multi-Robot Path Planning benchmark (robotics optimization)
+HPO_run_codes/       → CNN Hyperparameter Optimization benchmark (machine learning)
 README.md
-
 
 ---
 
@@ -58,9 +51,10 @@ All experiments strictly follow the methodology described in the manuscript:
 - Convergence curves reported using mean ± standard deviation
 - Log-scale visualization where appropriate
 
-Random seeds are independently generated for each run.
+Independent random seeds were used for each run.
 
 Due to the stochastic nature of metaheuristic algorithms, exact numerical values may vary slightly across executions. However, repeated independent runs consistently preserve the relative performance ranking and statistical conclusions reported in the manuscript.
+All baseline algorithms were implemented or configured using commonly recommended parameter settings from the literature. No additional tuning was performed beyond these standard configurations.
 
 ---
 
@@ -118,16 +112,20 @@ Output RMSE, MAE, MSE, R², and MAPE metrics
 
 Generate convergence and prediction plots
 
+---
+
 ## Reproducibility Statement:
 All algorithms are evaluated under identical evaluation budgets and parameter settings to ensure fairness.
 
 Although individual runs may produce slightly different numerical results due to stochastic initialization and sampling effects, repeated executions consistently preserve the performance ranking and statistical significance conclusions reported in the manuscript.
 
 This repository contains all necessary implementation details to reproduce the experimental framework described in the paper.
+---
 
 ## Hardware Notes:
 Runtime may vary depending on CPU/GPU availability.
 The CNN HPO benchmark is computationally heavier due to neural network training.
+---
 
 ## License:
 This repository is provided for academic research purposes.
