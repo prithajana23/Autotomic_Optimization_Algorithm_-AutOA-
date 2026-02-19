@@ -203,101 +203,121 @@ def run_optimizer(optimizer_func, run_num):
 # ==============================================================================
 # ==============================================================================
 #
-# ---  ✅ PLACEHOLDER: ADD YOUR OPTIMIZER IMPLEMENTATIONS HERE ---
+# ---  PLACEHOLDER: ADD YOUR OPTIMIZER IMPLEMENTATIONS HERE ---
 #
 # Hybrid AOA
+
+# --- HYBRID AutOA (Consistent with Algorithm 2 & LaTeX provided) ---
 def run_hybrid_aoa(history_list):
+    # --- Configuration from HPO Global Constants ---
     lb, ub, dim = HPO_BOUNDS_LOW, HPO_BOUNDS_HIGH, HPO_DIM
     pop_size = POP_SIZE
     max_iter = int(MAX_FEVALS / pop_size)
+    
+    # --- Parameters from LaTeX "Parameter Definitions (Hybrid AutOA)" ---
+    # alpha: Regeneration ratio (fraction of non-elite population to replace)
+    alpha = 0.3      
+    # mu: Mutation scaling coefficient for exploitation
+    mu = 0.1         
+    # p_exploit: Fixed hyperparameter controlling the mix of strategies
+    p_exploit = 0.7  
 
-    # Helper function to calculate population diversity
-    def diversity(pop): 
-        return np.mean(np.std(pop, axis=0))
-
-    # --- Initialization ---
+    # 1. Initialize (Algorithm 2, Line 1)
     Population = np.random.uniform(lb, ub, (pop_size, dim))
     Fitness = np.full(pop_size, np.inf)
-
-    best_pos = np.zeros(dim)
-    best_score = float('inf')
-
-    # Initial evaluation
+    
+    # Initial Evaluation
     for i in range(pop_size):
         Fitness[i] = objective_function(Population[i])
-        if Fitness[i] < best_score:
-            best_score = Fitness[i]
-            best_pos = Population[i].copy()
-        history_list.append(best_score) # Add best-so-far
-
-    # --- Main Loop ---
-    div_threshold = 0.05 # Diversity threshold
-    alpha = 0.5          # Parameter for adaptive phase
-    mutation_rate = 0.1  # Parameter for core phase
-
-    for t in range(max_iter - 1): # -1 for initial eval
-        new_population = Population.copy()
-        new_fitness = Fitness.copy()
-
-        # Strategy 1: Core AOA (Exploration Phase)
-        # Runs for 10 iterations, then switches
-        if (t // 10) % 2 == 0: 
-            for i in range(pop_size):
-                mutant = Population[i] + mutation_rate * (best_pos - Population[i]) * np.random.randn(dim)
-                mutant = np.clip(mutant, lb, ub)
-                mutant_fitness = objective_function(mutant)
-
-                if mutant_fitness < Fitness[i]:
-                    new_population[i], new_fitness[i] = mutant, mutant_fitness
-                
-                if mutant_fitness < best_score:
-                    best_score = mutant_fitness
-                    best_pos = mutant.copy()
-                history_list.append(best_score)
-
-        # Strategy 2: Adaptive AOA (Exploitation Phase)
-        else:
-            div = diversity(Population)
-            if div > div_threshold:
-                # High diversity strategy (adaptive mutation)
-                for i in range(pop_size):
-                    mutant = Population[i] + alpha * (best_pos - Population[i]) * np.random.randn(dim)
-                    mutant = np.clip(mutant, lb, ub)
-                    mutant_fitness = objective_function(mutant)
-                    if mutant_fitness < Fitness[i]:
-                        new_population[i], new_fitness[i] = mutant, mutant_fitness
-                    
-                    if mutant_fitness < best_score:
-                        best_score = mutant_fitness
-                        best_pos = mutant.copy()
-                    history_list.append(best_score)
-            else:
-                # Low diversity strategy (DE-like exploitation)
-                num_sacrifice = max(1, int(alpha * pop_size))
-                worst_indices = np.argsort(Fitness)[-num_sacrifice:]
-                
-                for i in range(pop_size):
-                    if i in worst_indices:
-                        a, b, c = np.random.choice(pop_size, 3, replace=False)
-                        mutant = Population[a] + 0.5 * (Population[b] - Population[c])
-                    else:
-                        mutant = Population[i] + 0.1 * (best_pos - Population[i]) * np.random.randn(dim)
-                    
-                    mutant = np.clip(mutant, lb, ub)
-                    mutant_fitness = objective_function(mutant)
-                    new_population[i], new_fitness[i] = mutant, mutant_fitness
-
-                    if mutant_fitness < best_score:
-                        best_score = mutant_fitness
-                        best_pos = mutant.copy()
-                    history_list.append(best_score)
         
-        # Update population for next iteration
-        Population = new_population
-        Fitness = new_fitness
+    # Initial Sort to find Elite
+    sorted_indices = np.argsort(Fitness)
+    Population = Population[sorted_indices]
+    Fitness = Fitness[sorted_indices]
+    
+    best_sol = Population[0].copy()
+    best_fit = Fitness[0]
+    history_list.append(best_fit)
 
-    return best_pos, best_score
-#
+    # 2. Main Loop (Algorithm 2, Line 2)
+    for t in range(max_iter):
+        
+        # Sort Population (Implicit in "Select survivors")
+        # We re-sort at the start of every generation to find the new Elite & Survivors
+        sorted_indices = np.argsort(Fitness)
+        Population = Population[sorted_indices]
+        Fitness = Fitness[sorted_indices]
+        
+        # 3. Preserve Elite (Algorithm 2, Line 4)
+        # The best solution is at index 0 because we just sorted. We keep it safe.
+        if Fitness[0] < best_fit:
+            best_fit = Fitness[0]
+            best_sol = Population[0].copy()
+            
+        # 4. Select Survivors (Algorithm 2, Line 6)
+        # We keep the Elite (index 0) + top (1-alpha) of the rest.
+        # "N_regen <- N - |P_surv| - 1"
+        
+        # Number of non-elite individuals available to be survivors
+        n_non_elite = pop_size - 1 
+        
+        # Number of survivors (excluding elite)
+        n_survivors = int((1 - alpha) * n_non_elite)
+        
+        # The indices to KEEP are 0 (Elite) + 1 to n_survivors
+        # The indices to REGENERATE are from (n_survivors + 1) to end.
+        start_regen_idx = n_survivors + 1
+        n_regen = pop_size - start_regen_idx # Matches "N - |P_surv| - 1"
+
+        # 5. Fixed-Ratio Hybrid Regeneration (Algorithm 2, Lines 8-11)
+        # Calculate split based on p_exploit
+        n_exploit_slots = int(np.round(p_exploit * n_regen))
+        
+        # Iterate through the regeneration slots
+        for i in range(start_regen_idx, pop_size):
+            
+            # Determine if this slot is for Exploitation or Exploration
+            # We assign the first chunk to Exploitation, the rest to Immigration
+            is_exploitation = (i - start_regen_idx) < n_exploit_slots
+            
+            if is_exploitation:
+                # --- Elite-Guided Mutation (Exploitation) ---
+                # theta_new = theta_survivor + mu * (theta_elite - theta_survivor) * N(0,1)
+                
+                # Pick a random survivor (indices 1 to n_survivors) as the base
+                # We do not pick index 0 (Elite) as the base, per the formula "theta_survivor"
+                survivor_idx = np.random.randint(1, start_regen_idx) if start_regen_idx > 1 else 0
+                theta_survivor = Population[survivor_idx]
+                
+                gaussian_noise = np.random.normal(0, 1, dim)
+                new_sol = theta_survivor + mu * (best_sol - theta_survivor) * gaussian_noise
+                
+            else:
+                # --- Immigration (Exploration) ---
+                # Uniform random sampling
+                new_sol = np.random.uniform(lb, ub, dim)
+
+            # Check bounds
+            new_sol = np.clip(new_sol, lb, ub)
+            
+            # Evaluate
+            new_fit = objective_function(new_sol)
+            
+            # Update Population
+            Population[i] = new_sol
+            Fitness[i] = new_fit
+
+        # Update Global Best (if a new solution found it)
+        current_best = np.min(Fitness)
+        if current_best < best_fit:
+            best_fit = current_best
+            best_sol = Population[np.argmin(Fitness)].copy()
+            
+        history_list.append(best_fit)
+
+    return best_sol, best_fit
+
+
 # ==============================================================================
 #
 # --- EXAMPLE: Random Search (follows the template) ---
@@ -443,7 +463,7 @@ def main():
         'n_features': X_hpo_train.shape[2]
     }
 
-    # --- 💡 ADD YOUR OPTIMIZERS HERE ---
+    # --- ADD YOUR OPTIMIZERS HERE ---
     # The key must be the optimizer's name (for plots/tables).
     # The value must be the function name (e.g., `run_my_optimizer_name`).
     optimizers = {
@@ -568,4 +588,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
