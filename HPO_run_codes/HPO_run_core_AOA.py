@@ -470,10 +470,10 @@ def main():
         'n_features': X_hpo_train.shape[2]
     }
 
-    # --- 💡 ADD YOUR OPTIMIZERS HERE ---
+    # --- ADD YOUR OPTIMIZERS HERE ---
     # The key must be the optimizer's name (for plots/tables).
     # The value must be the function name (e.g., `run_my_optimizer_name`).
-    # --- 💡 ADD YOUR OPTIMIZERS HERE ---
+    # --- ADD YOUR OPTIMIZERS HERE ---
     optimizers = {
         "Random Search": run_random_search,
         "Core AOA": run_core_aoa,  # <-- ADD THIS LINE
