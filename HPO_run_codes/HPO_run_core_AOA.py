@@ -203,59 +203,130 @@ def run_optimizer(optimizer_func, run_num):
 # ==============================================================================
 # ==============================================================================
 #
-# ---  ✅ PLACEHOLDER: ADD YOUR OPTIMIZER IMPLEMENTATIONS HERE ---
+# ---  PLACEHOLDER: ADD YOUR OPTIMIZER IMPLEMENTATIONS HERE ---
 #
-# Core AOA
-def run_core_aoa(history_list):
-    lb, ub, dim = HPO_BOUNDS_LOW, HPO_BOUNDS_HIGH, HPO_DIM
-    pop_size = POP_SIZE
-    max_iter = int(MAX_FEVALS / pop_size)
+# --- REVISED CORE AOA (Fully Consistent with Algorithm 1 & LaTeX) ---
+def core_aoa_optimize(fitness_func, lb, ub, dim, max_iter, pop_size):
+    convergence = []
+    
+    # --- Parameters from LaTeX ---
+    alpha = 0.3          # Sacrifice rate (fraction of worst solutions discarded)
+    mu = 0.1             # Mutation scaling coefficient
+    p_mut = 0.7          # Probability of "Mutation" vs "Immigration" in regeneration
 
-    # 1. Initialize population, fitness, and best solution
+    # 1. Initialize
     Population = np.random.uniform(lb, ub, (pop_size, dim))
-    Fitness = np.full(pop_size, np.inf)
+    Fitness = np.array([fitness_func(ind) for ind in Population])
+    
+    # Initial Sort to establish Elite
+    sorted_indices = np.argsort(Fitness)
+    Population = Population[sorted_indices]
+    Fitness = Fitness[sorted_indices]
+    
+    # Track Global Best (Elite)
+    best_sol = Population[0].copy()
+    best_fit = Fitness[0]
+    convergence.append(best_fit)
 
-    best_pos = np.zeros(dim)
-    best_score = float('inf')
+    # Determine split points
+    n_survivors = int((1 - alpha) * pop_size)
+    n_regen = pop_size - n_survivors
 
-    # 2. Initial evaluation
-    for i in range(pop_size):
-        Fitness[i] = objective_function(Population[i])
-        if Fitness[i] < best_score:
-            best_score = Fitness[i]
-            best_pos = Population[i].copy()
+    for t in range(max_iter):
+        # 2. Sort Population (Algorithm 1, Line 4)
+        # (Already sorted at end of loop, but ensures safety for first iter)
+        sorted_indices = np.argsort(Fitness)
+        Population = Population[sorted_indices]
+        Fitness = Fitness[sorted_indices]
+
+        # Update Elite
+        if Fitness[0] < best_fit:
+            best_fit = Fitness[0]
+            best_sol = Population[0].copy()
+
+        # 3. Select Survivors (Algorithm 1, Line 5)
+        # The top n_survivors are kept AS IS. (Implicit Elitism for the body)
+        # We only process the "Regeneration" slots (from n_survivors to end)
         
-        history_list.append(best_score) # Append best-so-far after each eval
-
-    # 3. Main optimization loop
-    for t in range(max_iter - 1): # -1 for initial evaluation
-        mutation_rate = 0.1 # Constant mutation rate for Core AOA
-
-        for i in range(pop_size):
-            # Create a mutant based on the best solution
-            mutant = Population[i] + mutation_rate * (best_pos - Population[i]) * np.random.randn(dim)
-            mutant = np.clip(mutant, lb, ub)
+        # 4. Regeneration Loop (Algorithm 1, Lines 7-11)
+        for i in range(n_survivors, pop_size):
             
-            # Evaluate the mutant
-            mutant_fitness = objective_function(mutant)
+            # Decide mechanism: Mutation vs Immigration
+            if np.random.rand() < p_mut:
+                # --- Mechanism A: Elite-Guided Mutation ---
+                # "Mutation: A Gaussian perturbation around the elite solution"
+                # Eq: theta_new = theta_i + 0.1 * (theta_elite - theta_i) * N(0,1)
+                
+                # To apply this eq, we need a "theta_i" (parent). 
+                # We pick a random Survivor to act as the parent for this new slot.
+                # (Avoiding index 0 to prevent zero-difference vector if parent == elite)
+                parent_idx = np.random.randint(1, n_survivors) if n_survivors > 1 else 0
+                theta_i = Population[parent_idx]
+                
+                # Apply Equation
+                gaussian_noise = np.random.normal(0, 1, dim)
+                new_sol = theta_i + mu * (best_sol - theta_i) * gaussian_noise
+                
+            else:
+                # --- Mechanism B: Immigration ---
+                # "Immigration: A global search step via uniform random sampling"
+                new_sol = np.random.uniform(lb, ub, dim)
 
-            # Greedy selection
-            if mutant_fitness < Fitness[i]:
-                Population[i] = mutant
-                Fitness[i] = mutant_fitness
+            # Check bounds
+            new_sol = np.clip(new_sol, lb, ub)
             
-            # Update global best
-            if mutant_fitness < best_score:
-                best_score = mutant_fitness
-                best_pos = mutant.copy()
-            
-            history_list.append(best_score) # Append best-so-far after each eval
+            # Update the population slot (Sacrifice & Replace)
+            Population[i] = new_sol
+            Fitness[i] = fitness_func(new_sol)
 
-    # 4. Return the final best
-    return best_pos, best_score
+        # Update convergence
+        current_best = np.min(Fitness)
+        if current_best < best_fit:
+            best_fit = current_best
+            best_sol = Population[np.argmin(Fitness)].copy()
+        convergence.append(best_fit)
+        
+    return best_sol, best_fit, convergence
 #
 # ==============================================================================
 #
+# --- WRAPPER FOR AOA (Bridges the gap between main() and core_aoa_optimize) ---
+def run_core_aoa(history_list):
+    """
+    Wrapper to make Core AOA compatible with the generic run_optimizer function.
+    """
+    # 1. Calculate iterations based on budget
+    # Standard formula: Max_Iter = Max_Fevals / Pop_Size
+    max_iter = MAX_FEVALS // POP_SIZE 
+    
+    # 2. Run the Core AOA Logic
+    best_sol, best_fit, convergence_curve = core_aoa_optimize(
+        fitness_func=objective_function,
+        lb=np.array(HPO_BOUNDS_LOW),
+        ub=np.array(HPO_BOUNDS_HIGH),
+        dim=HPO_DIM,
+        max_iter=max_iter,
+        pop_size=POP_SIZE
+    )
+    
+    # 3. Sync the history list
+    # The 'history_list' is passed by reference from run_optimizer.
+    # We need to populate it with the convergence data from AOA.
+    # AOA returns one value per generation, but we want to map it to evaluations if possible, 
+    # or just extend the list for the plot.
+    
+    # Clear it first to be safe (though it comes in empty)
+    history_list.clear()
+    
+    # AOA returns one best_score per *iteration*. 
+    # To make the plot smooth over *evaluations*, we repeat the score for the whole population.
+    for score in convergence_curve:
+        history_list.extend([score] * POP_SIZE)
+        
+    # 4. Return exactly what run_optimizer expects (params, loss)
+    return best_sol, best_fit
+
+
 # --- EXAMPLE: Random Search (follows the template) ---
 # Note: This is a simple case where 1 eval = 1 iteration
 #
@@ -523,4 +594,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
