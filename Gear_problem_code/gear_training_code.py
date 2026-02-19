@@ -1,15 +1,10 @@
 """
 Full benchmark for the Gear Train Design Problem (Version 5).
 
-Final methodological corrections for publication:
-1.  Statistical Test: Replaced the incorrect Wilcoxon signed-rank test
-    (for paired data) with the correct Mann-Whitney U test
-    (for independent data) using `scipy.stats.mannwhitneyu`.
-2.  Seed Fix: Removed the hardcoded `seed=1` from SOTA DE and CMA-ES
-    and replaced it with a random seed for each run. This ensures
-    their 30 runs are also stochastic and statistically valid.
-
-This script is now scientifically sound for publication.
+Methodological improvements:
+1.  Statistical Test: Uses Mann-Whitney U (Independent samples).
+2.  Seed Fix: SOTA DE and CMA-ES use random seeds for valid stats.
+3.  Algorithms: Includes Core, Adaptive, and Hybrid AutOA (Autotomic Framework).
 
 Install dependencies:
 pip install numpy matplotlib pandas scipy pyswarms cma
@@ -21,7 +16,7 @@ import time
 import pandas as pd
 import warnings
 from scipy.optimize import differential_evolution
-from scipy.stats import mannwhitneyu  # <-- Use Mann-Whitney U for independent samples
+from scipy.stats import mannwhitneyu
 import pyswarms as ps
 import cma
 from cma.evolution_strategy import CMAEvolutionStrategy
@@ -36,12 +31,18 @@ MAX_ITER = int(MAX_FEVALS / POP_SIZE)  # 500 iterations for O(N) algos
 MAX_ITER_ABC = int(MAX_ITER / 2)       # 250 for ABC (fair FE budget)
 
 # --- Problem Definition ---
-
+# Gear Train: 4 parameters, integers between 12 and 60
 bounds = [(12, 60)] * 4
+
+# Helper for Global Constants inside functions if needed
+HPO_BOUNDS_LOW = np.array([12, 12, 12, 12])
+HPO_BOUNDS_HIGH = np.array([60, 60, 60, 60])
+HPO_DIM = 4
 
 def round_to_bounds(x):
     return np.clip(np.round(x), 12, 60)
 
+# Helper to get the POSITIVE ratio for display/stats
 def gear_train_obj_max(x):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", category=RuntimeWarning)
@@ -50,6 +51,7 @@ def gear_train_obj_max(x):
             return 0.0
         return val
 
+# The actual objective function (Minimizes Negative Ratio)
 def objective(x):
     x_cont = np.atleast_2d(x)
     x_int = round_to_bounds(x_cont)
@@ -59,6 +61,7 @@ def objective(x):
         val = np.full(x_int.shape[0], float('inf'))
         valid_mask = (x3 != 0) & (x4 != 0)
         if np.any(valid_mask):
+            # We minimize the NEGATIVE to achieve Maximization
             val[valid_mask] = -((x1[valid_mask]*x2[valid_mask]) / (x3[valid_mask]*x4[valid_mask]))
         val[np.isnan(val)] = float('inf')
         val[np.isinf(val)] = float('inf')
@@ -209,131 +212,6 @@ def pso_optimize(max_iter, pop_size):
     convergence = [-val for val in optimizer.cost_history]
     return round_to_bounds(pos), convergence
 
-def core_aoa_optimize(max_iter, pop_size):
-    n = 4
-    lb = np.array([b[0] for b in bounds])
-    ub = np.array([b[1] for b in bounds])
-    Population = np.random.uniform(lb, ub, (pop_size, n))
-    Fitness = np.apply_along_axis(objective, 1, Population)
-    BestIndex = np.argmin(Fitness)
-    Best = Population[BestIndex].copy()
-    BestScore = Fitness[BestIndex]
-    convergence = []
-    for t in range(max_iter):
-        mutation_rate = 0.1
-        for i in range(pop_size):
-            if i != BestIndex:
-                mutant = Population[i] + mutation_rate*(Best - Population[i])*np.random.randn(n)
-                mutant = np.clip(mutant, lb, ub)
-                mutant_fitness = objective(mutant)
-                if mutant_fitness < Fitness[i]:
-                    Population[i] = mutant
-                    Fitness[i] = mutant_fitness
-        current_best_idx = np.argmin(Fitness)
-        if Fitness[current_best_idx] < BestScore:
-            BestIndex = current_best_idx
-            Best = Population[current_best_idx].copy()
-            BestScore = Fitness[current_best_idx]
-        convergence.append(-BestScore)
-    return round_to_bounds(Best), convergence
-
-def adaptive_aoa_optimize(max_iter, pop_size, alpha=0.5):
-    n = 4
-    lb = np.array([b[0] for b in bounds])
-    ub = np.array([b[1] for b in bounds])
-    Population = np.random.uniform(lb, ub, (pop_size, n))
-    Fitness = np.apply_along_axis(objective, 1, Population)
-    BestIndex = np.argmin(Fitness)
-    Best = Population[BestIndex].copy()
-    BestScore = Fitness[BestIndex]
-    convergence = []
-    def diversity(pop):
-        return np.mean(np.std(pop, axis=0))
-    for t in range(max_iter):
-        div = diversity(Population)
-        if div > 5:
-            for i in range(pop_size):
-                if i != BestIndex:
-                    mutant = Population[i] + alpha*(Best - Population[i])*np.random.randn(n)
-                    mutant = np.clip(mutant, lb, ub)
-                    mutant_fitness = objective(mutant)
-                    if mutant_fitness < Fitness[i]:
-                        Population[i] = mutant
-                        Fitness[i] = mutant_fitness
-        else:
-            num_sacrifice = int(alpha * pop_size)
-            if num_sacrifice < 1: num_sacrifice = 1
-            worst_indices = np.argsort(Fitness)[-num_sacrifice:]
-            for idx in worst_indices:
-                a,b,c = np.random.choice(pop_size, 3, replace=False)
-                mutant = Population[a] + np.random.rand()*(Population[b] - Population[c])
-                mutant = np.clip(mutant, lb, ub)
-                mutant_fitness = objective(mutant)
-                Population[idx] = mutant
-                Fitness[idx] = mutant_fitness
-        current_best_idx = np.argmin(Fitness)
-        if Fitness[current_best_idx] < BestScore:
-            BestIndex = current_best_idx
-            Best = Population[current_best_idx].copy()
-            BestScore = Fitness[current_best_idx]
-        convergence.append(-BestScore)
-    return round_to_bounds(Best), convergence
-
-def hybrid_aoa_optimize(max_iter, pop_size):
-    n = 4
-    lb = np.array([b[0] for b in bounds])
-    ub = np.array([b[1] for b in bounds])
-    Population = np.random.uniform(lb, ub, (pop_size, n))
-    Fitness = np.apply_along_axis(objective, 1, Population)
-    BestIndex = np.argmin(Fitness)
-    Best = Population[BestIndex].copy()
-    BestScore = Fitness[BestIndex]
-    convergence = []
-    def diversity(pop):
-        return np.mean(np.std(pop, axis=0))
-    for t in range(max_iter):
-        if (t//50)%2 == 0:
-            mutation_rate = 0.1
-            for i in range(pop_size):
-                if i != BestIndex:
-                    mutant = Population[i] + mutation_rate*(Best - Population[i])*np.random.randn(n)
-                    mutant = np.clip(mutant, lb, ub)
-                    mutant_fitness = objective(mutant)
-                    if mutant_fitness < Fitness[i]:
-                        Population[i] = mutant
-                        Fitness[i] = mutant_fitness
-        else:
-            div = diversity(Population)
-            alpha = 0.5
-            if div > 5:
-                for i in range(pop_size):
-                    if i != BestIndex:
-                        mutant = Population[i] + alpha*(Best - Population[i])*np.random.randn(n)
-                        mutant = np.clip(mutant, lb, ub)
-                        mutant_fitness = objective(mutant)
-                        if mutant_fitness < Fitness[i]:
-                            Population[i] = mutant
-                            Fitness[i] = mutant_fitness
-            else:
-                num_sacrifice = int(alpha*pop_size)
-                if num_sacrifice < 1: num_sacrifice = 1
-                worst_indices = np.argsort(Fitness)[-num_sacrifice:]
-                for idx in worst_indices:
-                    a,b,c = np.random.choice(pop_size, 3, replace=False)
-                    mutant = Population[a] + np.random.rand()*(Population[b] - Population[c])
-                    mutant = np.clip(mutant, lb, ub)
-                    Population[idx] = mutant
-                    Fitness[idx] = objective(mutant)
-        current_best_idx = np.argmin(Fitness)
-        if Fitness[current_best_idx] < BestScore:
-            BestIndex = current_best_idx
-            Best = Population[current_best_idx].copy()
-            BestScore = Fitness[current_best_idx]
-        convergence.append(-BestScore)
-    return round_to_bounds(Best), convergence
-
-# --- Tier 2: SOTA Champion Implementations ---
-
 def sota_de_optimize(max_fevals, pop_size_target):
     n = 4
     popsize_multiplier = int(np.ceil(pop_size_target / n))
@@ -375,6 +253,199 @@ def cma_es_optimize(max_fevals, pop_size):
     if not convergence:
         convergence = [-es.result.fbest]*max_iter_cma
     return round_to_bounds(best_sol), convergence[:max_iter_cma]
+
+# --- AOA VARIANTS (Consistent with Latex) ---
+
+def core_aoa_optimize(max_iter, pop_size):
+    # --- Configuration ---
+    n = 4  
+    lb = np.array([b[0] for b in bounds])
+    ub = np.array([b[1] for b in bounds])
+    
+    # --- Parameters from LaTeX "Parameter Definitions (Core AutOA)" ---
+    alpha = 0.3      # Sacrifice rate 
+    mu = 0.1         # Mutation scaling
+    p_mut = 0.7      # Mutation probability
+
+    # 1. Initialize 
+    Population = np.random.uniform(lb, ub, (pop_size, n))
+    Fitness = np.apply_along_axis(objective, 1, Population)
+    
+    # Track Global Best
+    BestIndex = np.argmin(Fitness)
+    Best = Population[BestIndex].copy()
+    BestScore = Fitness[BestIndex]
+    
+    convergence = []
+
+    # 2. Main Loop 
+    for t in range(max_iter):
+        
+        # 3. Sort Population (Algorithm 1)
+        sorted_indices = np.argsort(Fitness)
+        Population = Population[sorted_indices]
+        Fitness = Fitness[sorted_indices]
+        
+        # Update Elite
+        if Fitness[0] < BestScore:
+            BestScore = Fitness[0]
+            Best = Population[0].copy()
+
+        # 4. Select Survivors
+        n_survivors = int((1 - alpha) * pop_size)
+        
+        # 5. Regeneration Loop 
+        for i in range(n_survivors, pop_size):
+            if np.random.rand() < p_mut:
+                # Elite-Guided Mutation
+                parent_idx = np.random.randint(0, n_survivors)
+                theta_i = Population[parent_idx]
+                
+                gaussian_noise = np.random.randn(n)
+                mutant = theta_i + mu * (Best - theta_i) * gaussian_noise
+            else:
+                # Immigration
+                mutant = np.random.uniform(lb, ub, n)
+            
+            mutant = np.clip(mutant, lb, ub)
+            mutant_fitness = objective(mutant)
+            
+            Population[i] = mutant
+            Fitness[i] = mutant_fitness
+
+        current_best_idx = np.argmin(Fitness)
+        if Fitness[current_best_idx] < BestScore:
+            BestScore = Fitness[current_best_idx]
+            Best = Population[current_best_idx].copy()
+            
+        convergence.append(-BestScore) 
+
+    return round_to_bounds(Best), convergence
+
+def adaptive_aoa_optimize(max_iter, pop_size, alpha=0.5):
+    n = 4
+    lb = np.array([b[0] for b in bounds])
+    ub = np.array([b[1] for b in bounds])
+    Population = np.random.uniform(lb, ub, (pop_size, n))
+    Fitness = np.apply_along_axis(objective, 1, Population)
+    BestIndex = np.argmin(Fitness)
+    Best = Population[BestIndex].copy()
+    BestScore = Fitness[BestIndex]
+    convergence = []
+    def diversity(pop):
+        return np.mean(np.std(pop, axis=0))
+    for t in range(max_iter):
+        div = diversity(Population)
+        # Using 5 as threshold for Gear Train (Range ~48) is acceptable
+        if div > 5: 
+            for i in range(pop_size):
+                if i != BestIndex:
+                    mutant = Population[i] + alpha*(Best - Population[i])*np.random.randn(n)
+                    mutant = np.clip(mutant, lb, ub)
+                    mutant_fitness = objective(mutant)
+                    if mutant_fitness < Fitness[i]:
+                        Population[i] = mutant
+                        Fitness[i] = mutant_fitness
+        else:
+            num_sacrifice = int(alpha * pop_size)
+            if num_sacrifice < 1: num_sacrifice = 1
+            worst_indices = np.argsort(Fitness)[-num_sacrifice:]
+            for idx in worst_indices:
+                a,b,c = np.random.choice(pop_size, 3, replace=False)
+                mutant = Population[a] + np.random.rand()*(Population[b] - Population[c])
+                mutant = np.clip(mutant, lb, ub)
+                mutant_fitness = objective(mutant)
+                Population[idx] = mutant
+                Fitness[idx] = mutant_fitness
+        current_best_idx = np.argmin(Fitness)
+        if Fitness[current_best_idx] < BestScore:
+            BestIndex = current_best_idx
+            Best = Population[current_best_idx].copy()
+            BestScore = Fitness[current_best_idx]
+        convergence.append(-BestScore)
+    return round_to_bounds(Best), convergence
+
+# --- CORRECTED HYBRID AOA (Algorithm 2) ---
+def hybrid_aoa_optimize(max_iter, pop_size):
+    # --- Configuration ---
+    n = 4  
+    lb = np.array([b[0] for b in bounds])
+    ub = np.array([b[1] for b in bounds])
+    
+    # --- Parameters from LaTeX "Parameter Definitions (Hybrid AutOA)" ---
+    alpha = 0.3       # Regeneration ratio
+    mu = 0.1          # Mutation scaling
+    p_exploit = 0.7   # Fixed exploitation ratio
+
+    # 1. Initialize 
+    Population = np.random.uniform(lb, ub, (pop_size, n))
+    Fitness = np.apply_along_axis(objective, 1, Population)
+    
+    # Sort initially 
+    sorted_indices = np.argsort(Fitness)
+    Population = Population[sorted_indices]
+    Fitness = Fitness[sorted_indices]
+    
+    BestIndex = 0
+    Best = Population[0].copy()
+    BestScore = Fitness[0]
+    
+    convergence = []
+
+    # 2. Main Loop
+    for t in range(max_iter):
+        
+        # Sort Population
+        sorted_indices = np.argsort(Fitness)
+        Population = Population[sorted_indices]
+        Fitness = Fitness[sorted_indices]
+        
+        # 3. Preserve Elite (Index 0 is kept safe)
+        if Fitness[0] < BestScore:
+            BestScore = Fitness[0]
+            Best = Population[0].copy()
+        
+        # 4. Define Survivors and Regeneration Pool
+        n_non_elite = pop_size - 1
+        n_survivors = int((1 - alpha) * n_non_elite)
+        start_regen_idx = n_survivors + 1
+        n_regen = pop_size - start_regen_idx
+        
+        # 5. Fixed-Ratio Hybrid Regeneration
+        n_exploit_slots = int(np.round(p_exploit * n_regen))
+        
+        for i in range(start_regen_idx, pop_size):
+            is_exploitation = (i - start_regen_idx) < n_exploit_slots
+            
+            if is_exploitation:
+                # Elite-Guided Mutation
+                if start_regen_idx > 1:
+                    survivor_idx = np.random.randint(1, start_regen_idx)
+                else:
+                    survivor_idx = 0 
+                theta_survivor = Population[survivor_idx]
+                
+                gaussian_noise = np.random.randn(n)
+                mutant = theta_survivor + mu * (Best - theta_survivor) * gaussian_noise
+            else:
+                # Immigration
+                mutant = np.random.uniform(lb, ub, n)
+            
+            mutant = np.clip(mutant, lb, ub)
+            mutant_fitness = objective(mutant)
+            
+            Population[i] = mutant
+            Fitness[i] = mutant_fitness
+
+        current_best_idx = np.argmin(Fitness)
+        if Fitness[current_best_idx] < BestScore:
+            Best = Population[current_best_idx].copy()
+            BestScore = Fitness[current_best_idx]
+            
+        convergence.append(-BestScore)
+
+    return round_to_bounds(Best), convergence
+
 
 # --- Optimizer Dictionary ---
 
