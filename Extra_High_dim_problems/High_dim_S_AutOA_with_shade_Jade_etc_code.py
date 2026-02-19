@@ -495,7 +495,7 @@ def run_autosa_upgraded(problem, max_fevals):
     
     NOVELTY:
     Instead of resetting whole individuals (standard Autotomy), 
-    S-AutOA performs 'Surgical Autotomy'. It monitors variance 
+    S-AutOA performs 'Selective Autotomy'. It monitors variance 
     dimension-by-dimension. If specific dimensions stagnate, 
     it applies Opposition-Based Learning (OBL) ONLY to those 
     dimensions, preserving the 'healthy' genetic material in 
